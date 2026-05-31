@@ -1,0 +1,7 @@
+# Paquet partagé entre le programme noyau (eBPF) et le daemon (userspace).
+[package]
+name = "shield-common"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]

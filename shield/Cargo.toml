@@ -1,0 +1,13 @@
+[package]
+name = "shield"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aya = "0.13.1"
+aya-log = "0.2.1"
+shield-common = { path = "../shield-common" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+anyhow = "1"
+env_logger = "0.11"
+log = "0.4"

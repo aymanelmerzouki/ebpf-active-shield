@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = ["shield", "shield-common", "shield-ebpf"]
+
+[profile.release]
+opt-level = 3
+lto = true
