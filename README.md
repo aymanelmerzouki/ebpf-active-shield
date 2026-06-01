@@ -1,5 +1,7 @@
 # ebpf-active-shield
 
+[![build](https://github.com/aymanelmerzouki/ebpf-active-shield/actions/workflows/build.yml/badge.svg)](https://github.com/aymanelmerzouki/ebpf-active-shield/actions/workflows/build.yml)
+
 An eBPF/LSM security agent for Linux, written in Rust with [Aya](https://aya-rs.dev).
 It attaches to the `bprm_check_security` LSM hook to control which processes are
 allowed to execute other programs (execution-origin control), enforced from
@@ -72,6 +74,13 @@ sudo RUST_LOG=info SHIELD_CONFIG=/etc/shield.toml ./target/release/shield
 ```
 
 Set `mode = "enforce"` in the config to actually deny execution.
+
+## Continuous integration
+
+The CI workflow builds both the eBPF program and the user-space daemon on every
+push. It does **not** run the agent: enforcement requires a kernel with BPF LSM
+enabled and root privileges, which the hosted runners do not provide. Runtime
+behaviour is verified manually (see the commit history).
 
 ## License
 
