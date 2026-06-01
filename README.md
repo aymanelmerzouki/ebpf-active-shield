@@ -1,14 +1,24 @@
 # ebpf-active-shield
 
 An eBPF/LSM security agent for Linux, written in Rust with [Aya](https://aya-rs.dev).
-It attaches to the `bprm_check_security` LSM hook to observe (and, in later
-versions, control) process execution from within the kernel.
+It attaches to the `bprm_check_security` LSM hook to control which processes are
+allowed to execute other programs (execution-origin control), enforced from
+within the kernel.
 
 ## Status
 
-Early stage. The current version runs in **observe mode**: it logs every process
-execution attempt without blocking anything. Enforcement (allowlist-based blocking)
-is the next milestone.
+Working prototype. The agent maintains a kernel-side allowlist of processes that
+may spawn other programs. It runs in two modes:
+
+- **log-only** (default): logs would-be blocks without enforcing. Safe.
+- **enforce**: actually denies execution (`EPERM`) for callers not in the allowlist.
+
+This is effective against patterns like a compromised service spawning a shell
+(reverse shells, arbitrary command execution).
+
+> Note: identification is based on the caller's `comm` (process name, max 16
+> chars). Distinguishing two binaries with the same name is a known limitation,
+> planned for a later version using the full executable path.
 
 ## Architecture
 
@@ -36,7 +46,11 @@ is the next milestone.
 Loading an eBPF LSM program requires elevated privileges:
 
 ```bash
+# log-only (default, safe)
 sudo RUST_LOG=info ./target/release/shield
+
+# enforce (actually blocks; pass the variable through sudo)
+sudo SHIELD_MODE=enforce RUST_LOG=info ./target/release/shield
 ```
 
 ## License
