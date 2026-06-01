@@ -41,17 +41,37 @@ This is effective against patterns like a compromised service spawning a shell
 ./build.sh
 ```
 
+## Configuration
+
+The agent reads its policy from `shield.toml` (override the path with the
+`SHIELD_CONFIG` environment variable):
+
+```toml
+mode = "log-only"   # or "enforce"
+allowed_callers = ["bash", "zsh", "systemd", "cargo", "git"]
+```
+
+Blocked (or would-be-blocked) executions are reported as structured events
+through an eBPF ring buffer:
+
+```
+[would-block] pid=890435 comm=sneaky_proc
+[BLOCKED]     pid=890440 comm=weirdname
+```
+
 ## Run
 
 Loading an eBPF LSM program requires elevated privileges:
 
 ```bash
-# log-only (default, safe)
+# uses ./shield.toml by default
 sudo RUST_LOG=info ./target/release/shield
 
-# enforce (actually blocks; pass the variable through sudo)
-sudo SHIELD_MODE=enforce RUST_LOG=info ./target/release/shield
+# custom config path
+sudo RUST_LOG=info SHIELD_CONFIG=/etc/shield.toml ./target/release/shield
 ```
+
+Set `mode = "enforce"` in the config to actually deny execution.
 
 ## License
 

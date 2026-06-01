@@ -1,0 +1,9 @@
+mode = "log-only"
+
+allowed_callers = [
+    "bash", "sh", "zsh", "fish",
+    "systemd", "dbus-daemon",
+    "cargo", "rustc", "rustup", "git", "make", "shield", "sudo",
+    "gnome-shell", "Xorg", "hyprland", "sway", "waybar",
+    "kitty", "alacritty", "foot", "code",
+]

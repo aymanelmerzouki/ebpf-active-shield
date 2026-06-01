@@ -2,19 +2,21 @@
 #![no_main]
 
 use aya_ebpf::{
-    helpers::bpf_get_current_comm,
+    helpers::{bpf_get_current_comm, bpf_get_current_pid_tgid},
     macros::{lsm, map},
-    maps::{Array, HashMap},
+    maps::{Array, HashMap, RingBuf},
     programs::LsmContext,
 };
-use aya_log_ebpf::info;
-use shield_common::{MODE_ENFORCE, MODE_LOG_ONLY};
+use shield_common::{BlockEvent, MODE_ENFORCE, MODE_LOG_ONLY};
 
 #[map]
 static ALLOWLIST: HashMap<u64, u8> = HashMap::with_max_entries(1024, 0);
 
 #[map]
 static MODE: Array<u8> = Array::with_max_entries(1, 0);
+
+#[map]
+static EVENTS: RingBuf = RingBuf::with_byte_size(4096 * 64, 0);
 
 const EPERM: i32 = -1;
 
@@ -41,22 +43,24 @@ pub fn shield(ctx: LsmContext) -> i32 {
     }
 }
 
-fn try_shield(ctx: &LsmContext) -> Result<i32, i32> {
+fn try_shield(_ctx: &LsmContext) -> Result<i32, i32> {
     let comm = bpf_get_current_comm().map_err(|_| 0i32)?;
     let key = hash_comm(&comm);
 
-    let allowed = unsafe { ALLOWLIST.get(&key).is_some() };
-    if allowed {
+    if unsafe { ALLOWLIST.get(&key).is_some() } {
         return Ok(0);
     }
 
     let mode = MODE.get(0).copied().unwrap_or(MODE_LOG_ONLY);
+    let blocked = if mode == MODE_ENFORCE { 1 } else { 0 };
+
+    let pid = (bpf_get_current_pid_tgid() >> 32) as u32;
+    let event = BlockEvent { pid, comm, blocked };
+    let _ = EVENTS.output(&event, 0);
 
     if mode == MODE_ENFORCE {
-        info!(ctx, "blocked: caller not allowed to exec");
         Ok(EPERM)
     } else {
-        info!(ctx, "would block caller (log-only)");
         Ok(0)
     }
 }

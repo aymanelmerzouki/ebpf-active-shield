@@ -1,15 +1,23 @@
-use aya::maps::{Array, HashMap};
+use aya::maps::{Array, HashMap, RingBuf};
 use aya::programs::Lsm;
 use aya::{Btf, Ebpf};
 use log::{info, warn};
-use shield_common::{MODE_ENFORCE, MODE_LOG_ONLY};
-use std::env;
+use serde::Deserialize;
+use shield_common::{BlockEvent, MODE_ENFORCE, MODE_LOG_ONLY};
+use std::fs;
+use tokio::io::unix::AsyncFd;
 
-const ALLOWED_CALLERS: &[&str] = &[
-    "bash", "sh", "zsh", "fish", "cargo", "rustc", "shield", "sudo", "systemd",
-    "gnome-shell", "Xorg", "code", "git", "rustup", "waybar", "hyprland", "sway",
-    "kitty", "alacritty", "foot", "dbus-daemon", "make",
-];
+#[derive(Deserialize)]
+struct Config {
+    #[serde(default = "default_mode")]
+    mode: String,
+    #[serde(default)]
+    allowed_callers: Vec<String>,
+}
+
+fn default_mode() -> String {
+    "log-only".to_string()
+}
 
 fn hash_comm(name: &str) -> u64 {
     let mut h: u64 = 14695981039346656037;
@@ -20,27 +28,35 @@ fn hash_comm(name: &str) -> u64 {
     h
 }
 
+fn load_config() -> Config {
+    let path = std::env::var("SHIELD_CONFIG").unwrap_or_else(|_| "shield.toml".to_string());
+    match fs::read_to_string(&path) {
+        Ok(s) => toml::from_str(&s).unwrap_or_else(|e| {
+            warn!("invalid config {path}: {e}; using defaults");
+            Config { mode: default_mode(), allowed_callers: vec![] }
+        }),
+        Err(_) => {
+            warn!("config {path} not found; using defaults (log-only, empty allowlist)");
+            Config { mode: default_mode(), allowed_callers: vec![] }
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     env_logger::init();
 
-    let mode = match env::var("SHIELD_MODE").as_deref() {
-        Ok("enforce") => MODE_ENFORCE,
-        _ => MODE_LOG_ONLY,
-    };
+    let cfg = load_config();
+    let mode = if cfg.mode == "enforce" { MODE_ENFORCE } else { MODE_LOG_ONLY };
 
     let mut ebpf = Ebpf::load(aya::include_bytes_aligned!(
         "../../target/bpfel-unknown-none/release/shield"
     ))?;
 
-    if let Err(e) = aya_log::EbpfLogger::init(&mut ebpf) {
-        warn!("failed to initialize eBPF logger: {e}");
-    }
-
     {
         let mut allowlist: HashMap<_, u64, u8> =
             HashMap::try_from(ebpf.map_mut("ALLOWLIST").unwrap())?;
-        for name in ALLOWED_CALLERS {
+        for name in &cfg.allowed_callers {
             allowlist.insert(hash_comm(name), 1, 0)?;
         }
     }
@@ -55,9 +71,33 @@ async fn main() -> anyhow::Result<()> {
     program.attach()?;
 
     let mode_str = if mode == MODE_ENFORCE { "enforce" } else { "log-only" };
-    info!("shield active (mode: {mode_str}); press Ctrl-C to stop");
+    info!("shield active (mode: {mode_str}, {} allowed callers)", cfg.allowed_callers.len());
 
-    tokio::signal::ctrl_c().await?;
-    info!("shutting down");
+    let ring = RingBuf::try_from(ebpf.map_mut("EVENTS").unwrap())?;
+    let mut async_fd = AsyncFd::new(ring)?;
+
+    loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                info!("shutting down");
+                break;
+            }
+            guard = async_fd.readable_mut() => {
+                let mut guard = guard?;
+                let ring = guard.get_inner_mut();
+                while let Some(item) = ring.next() {
+                    if item.len() >= std::mem::size_of::<BlockEvent>() {
+                        let ev = unsafe { &*(item.as_ptr() as *const BlockEvent) };
+                        let comm = String::from_utf8_lossy(&ev.comm);
+                        let comm = comm.trim_end_matches('\0');
+                        let tag = if ev.blocked == 1 { "BLOCKED" } else { "would-block" };
+                        info!("[{tag}] pid={} comm={}", ev.pid, comm);
+                    }
+                }
+                guard.clear_ready();
+            }
+        }
+    }
+
     Ok(())
 }
